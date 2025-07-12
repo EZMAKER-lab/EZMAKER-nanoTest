@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>EZ-nano 센서 모니터링</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary-color: #007bff; --secondary-color: #6c757d;
+            --success-color: #28a745; --danger-color: #dc3545;
+            --info-color: #17a2b8; --bg-light: #f8f9fa;
+            --dark-gray: #343a40; --border-color: #dee2e6;
+        }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-light); display: flex; flex-direction: column; color: var(--dark-gray);
+        }
+        .header { 
+            background-color: var(--primary-color); color: white; padding: 1rem; display: flex; align-items: center; justify-content: space-between; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex-wrap: wrap; gap: 1rem; z-index: 10;
+        }
+        .header h1 { margin: 0; font-size: 1.5em; white-space: nowrap; }
+        .header .controls { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+        button { 
+            padding: 0.6em 1em; font-size: 0.9em; font-weight: 500; color: white; background-color: var(--success-color); 
+            border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.2s, transform 0.1s; 
+        }
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: scale(0.98); }
+        button:disabled { background-color: var(--secondary-color); cursor: not-allowed; transform: none; filter: none; }
+        #disconnectButton { background-color: var(--danger-color); }
+        #openSettingsButton { background-color: var(--info-color); }
+        input, select { padding: 0.6em; border-radius: 5px; border: 1px solid var(--border-color); font-size: 1em; }
+        
+        .main-container { flex: 1; padding: 1rem; overflow: hidden; }
+        .panel { 
+            background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex; width: 100%; height: 100%; flex-direction: row;
+        }
+        #data-table-wrapper { flex: 0 0 40%; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border-color); }
+        #chart-wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        
+        .control-panel { padding: 0.75rem; border-bottom: 1px solid var(--border-color); background-color: var(--bg-light); display: flex; align-items: center; gap: 1rem; }
+        .control-panel label { font-weight: 500; }
+        
+        #splitter { flex: 0 0 8px; background: #e9ecef; cursor: col-resize; transition: background-color 0.2s; }
+        #splitter:hover { background: var(--primary-color); }
+        
+        #data-table-container { flex: 1; overflow: auto; }
+        #data-table { width: 100%; border-collapse: collapse; }
+        #data-table th, #data-table td { border: 1px solid var(--border-color); padding: 0.75rem; text-align: left; }
+        #data-table th { background-color: var(--bg-light); position: sticky; top: 0; z-index: 1; }
+        
+        #chart-container { flex: 1; position: relative; padding: 1rem; }
+
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); display: none;
+            justify-content: center; align-items: center; z-index: 1000;
+        }
+        .modal-content { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); width: 90%; max-width: 500px; }
+        .modal-content h3 { margin-top: 0; }
+        .modal-content .form-group { margin-bottom: 1rem; }
+        .modal-content label { display: block; margin-bottom: 0.5rem; font-weight: 500; }
+        .modal-content select, .modal-content input { width: 100%; box-sizing: border-box; }
+        .modal-buttons { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; }
+        #cancelButton { background-color: var(--secondary-color); }
+
+        @media (max-width: 768px) {
+            html, body { overflow: visible; font-size: 14px; }
+            .header { flex-direction: column; align-items: stretch; }
+            .header h1 { text-align: center; margin-bottom: 0.5rem; }
+            .header .controls { justify-content: center; }
+            .main-container { padding: 0.5rem; overflow: visible; }
+            .panel { flex-direction: column; }
+            #data-table-wrapper { flex: 1 1 50%; min-height: 300px; border-right: none; border-bottom: 1px solid var(--border-color); }
+            #splitter { height: 8px; width: 100%; cursor: row-resize; flex-basis: 8px; }
+            #chart-wrapper { flex: 1 1 50%; min-height: 300px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🛰️ EZ-nano 센서 모니터링</h1>
+        <div class="controls">
+            <input type="text" id="bleNameInput" placeholder="EZ-xxxxxxx" maxlength="7" disabled>
+            <button id="applyNameButton" disabled>이름 변경</button>
+            <button id="openSettingsButton" disabled>센서 설정</button>
+            <button id="connectButton">장치 연결</button>
+            <button id="disconnectButton" style="display: none;">연결 해제</button>
+            <button id="txButton" disabled>전송 시작</button>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="panel" id="data-panel">
+            <div id="data-table-wrapper">
+                <div class="control-panel">
+                    <label for="dataLimitSlider">최대 표시:</label>
+                    <input type="range" id="dataLimitSlider" min="10" max="500" step="10" value="100" style="flex: 1;">
+                    <span id="dataLimitValue">100</span>
+                </div>
+                <div id="data-table-container">
+                    <table id="data-table">
+                        <thead><tr><th>시간</th><th id="sensorValueHeader">센서 값</th></tr></thead>
+                        <tbody id="data-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="splitter"></div>
+            <div id="chart-wrapper">
+                <div class="control-panel y-axis-controls">
+                    <label><input type="checkbox" id="yAxisAuto" checked> Y축 자동</label>
+                    <input type="number" id="yAxisMin" placeholder="Min" disabled>
+                    <input type="number" id="yAxisMax" placeholder="Max" disabled>
+                </div>
+                <div id="chart-container"><canvas id="sensorChart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>센서 설정</h3>
+            <div class="form-group"><label for="sensorSelect">센서 선택:</label><select id="sensorSelect"></select></div>
+            <div class="form-group"><label for="modalIntervalInput">수집 간격 (초):</label><input type="number" id="modalIntervalInput" value="1" min="0.01" step="0.1"></div>
+            <div class="modal-buttons">
+                <button id="cancelButton">취소</button><button id="applySensorButton">적용</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 수정 (2025-07-13 01:23): DOM 요소 선택 방식 변경 ---
+        // 사유: 코드의 안정성과 디버깅 편의성을 위해 각 요소를 명시적으로 상수에 할당합니다.
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const txButton = document.getElementById('txButton');
+        const bleNameInput = document.getElementById('bleNameInput');
+        const applyNameButton = document.getElementById('applyNameButton');
+        const dataBody = document.getElementById('data-body');
+        const sensorValueHeader = document.getElementById('sensorValueHeader');
+        const openSettingsButton = document.getElementById('openSettingsButton');
+        const settingsModal = document.getElementById('settingsModal');
+        const sensorSelect = document.getElementById('sensorSelect');
+        const modalIntervalInput = document.getElementById('modalIntervalInput');
+        const applySensorButton = document.getElementById('applySensorButton');
+        const cancelButton = document.getElementById('cancelButton');
+        const yAxisAuto = document.getElementById('yAxisAuto');
+        const yAxisMin = document.getElementById('yAxisMin');
+        const yAxisMax = document.getElementById('yAxisMax');
+        const splitter = document.getElementById('splitter');
+        const dataPanel = document.getElementById('data-panel');
+        const dataTableWrapper = document.getElementById('data-table-wrapper');
+        const dataLimitSlider = document.getElementById('dataLimitSlider');
+        const dataLimitValue = document.getElementById('dataLimitValue');
+        
+        // BLE & State
+        const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e", TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e", RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+        let bleDevice, rxCharacteristic, txCharacteristic, isTransmitting = false;
+        let maxDataPoints = 100;
+
+        const sensorInfo = {
+            '0':{name:'밝기 (BH1750)',unit:'lux'}, '1':{name:'온도 (HDC2010)',unit:'°C'}, '2':{name:'습도 (HDC2010)',unit:'%'}, 
+            '3':{name:'밝기 (CDS)',unit:'raw'}, '4':{name:'온도 (BMP280)',unit:'°C'}, '5':{name:'기압 (BMP280)',unit:'hPa'}, 
+            '6':{name:'수중/접촉 온도 (DS18B20)',unit:'°C'}, '7':{name:'온도 (DHT-11)',unit:'°C'}, '8':{name:'습도 (DHT-11)',unit:'%'}
+        };
+        
+        const chartCtx = document.getElementById('sensorChart').getContext('2d');
+        const sensorChart = new Chart(chartCtx, { type: 'line', data: { labels: [], datasets: [{ label: 'Sensor Value', data: [], borderColor: 'var(--primary-color)', backgroundColor: 'rgba(0, 123, 255, 0.1)', borderWidth: 2, fill: true, tension: 0.1 }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { title: { display: true, text: 'Time' } }, y: { title: { display: true, text: 'Value' } } } }});
+
+        // Event Listeners
+        connectButton.addEventListener('click', connectDevice);
+        disconnectButton.addEventListener('click', disconnectDevice);
+        txButton.addEventListener('click', toggleTransmission);
+        applyNameButton.addEventListener('click', changeDeviceName);
+        openSettingsButton.addEventListener('click', () => { settingsModal.style.display = 'flex'; });
+        cancelButton.addEventListener('click', () => { settingsModal.style.display = 'none'; });
+        applySensorButton.addEventListener('click', applySensorSettings);
+        dataLimitSlider.addEventListener('input', (e) => {
+            maxDataPoints = parseInt(e.target.value);
+            dataLimitValue.textContent = maxDataPoints;
+        });
+        [yAxisAuto, yAxisMin, yAxisMax].forEach(el => el.addEventListener('input', updateYAxis));
+        splitter.addEventListener('mousedown', initDrag);
+
+        // --- Functions ---
+        function initApp() { populateSensorSelect(); updateYAxis(); dataLimitValue.textContent = dataLimitSlider.value; maxDataPoints = parseInt(dataLimitSlider.value); }
+        function populateSensorSelect() { for (const id in sensorInfo) { const option = document.createElement('option'); option.value = id; option.textContent = sensorInfo[id].name; sensorSelect.appendChild(option); } sensorSelect.value = '0'; }
+        async function connectDevice() { try { bleDevice = await navigator.bluetooth.requestDevice({ filters: [{ services: [UART_SERVICE_UUID] }], optionalServices: [UART_SERVICE_UUID] }); bleDevice.addEventListener('gattserverdisconnected', onDisconnected); const server = await bleDevice.gatt.connect(); const service = await server.getPrimaryService(UART_SERVICE_UUID); [txCharacteristic, rxCharacteristic] = await Promise.all([service.getCharacteristic(TX_CHAR_UUID), service.getCharacteristic(RX_CHAR_UUID)]); await txCharacteristic.startNotifications(); txCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications); onConnected(); } catch (error) { console.error('Connection failed!', error); } }
+        function onConnected() { connectButton.style.display = 'none'; disconnectButton.style.display = 'block'; [txButton, applyNameButton, bleNameInput, openSettingsButton].forEach(el => el.disabled = false); bleNameInput.value = bleDevice.name.startsWith("EZ-") ? bleDevice.name.substring(3) : bleDevice.name; const now = new Date(); sendCommand(`TS:${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}.${now.getMilliseconds()}`); }
+        function onDisconnected() { connectButton.style.display = 'block'; disconnectButton.style.display = 'none'; [txButton, applyNameButton, bleNameInput, openSettingsButton].forEach(el => el.disabled = true); txButton.textContent = '전송 시작'; isTransmitting = false; }
+        async function disconnectDevice() { if (bleDevice?.gatt.connected) await bleDevice.gatt.disconnect(); }
+        async function sendCommand(command) { if (!rxCharacteristic) return; try { await rxCharacteristic.writeValue(new TextEncoder().encode(command)); console.log('Sent:', command); } catch (error) { console.error('Send failed:', error); } }
+        function handleNotifications(event) { const dataString = new TextDecoder().decode(event.target.value); if (dataString === "T1" || dataString === "T0") { isTransmitting = (dataString === "T1"); txButton.textContent = isTransmitting ? '전송 중지' : '전송 시작'; openSettingsButton.disabled = isTransmitting; return; } const [timestamp, sensorValue] = dataString.split(','); if (timestamp && sensorValue !== undefined) { updateTable(timestamp, sensorValue); updateChart(timestamp, sensorValue); } }
+        function updateTable(timestamp, value) { const newRow = dataBody.insertRow(0); const unit = sensorInfo[sensorSelect.value].unit; newRow.innerHTML = `<td>${timestamp}</td><td>${parseFloat(value).toFixed(2)} ${unit}</td>`; if (dataBody.rows.length > maxDataPoints) dataBody.deleteRow(maxDataPoints); }
+        function updateChart(label, data) { sensorChart.data.labels.push(label); sensorChart.data.datasets[0].data.push(parseFloat(data)); if (sensorChart.data.labels.length > maxDataPoints) { sensorChart.data.labels.shift(); sensorChart.data.datasets[0].data.shift(); } sensorChart.update('none'); }
+        function toggleTransmission() { isTransmitting = !isTransmitting; sendCommand(isTransmitting ? 'T1' : 'T0'); txButton.textContent = isTransmitting ? '전송 중지' : '전송 시작'; openSettingsButton.disabled = isTransmitting; }
+        function changeDeviceName() { const newName = bleNameInput.value.trim(); if (newName) { sendCommand(`SN:${newName}`); alert('이름 변경 명령을 전송했습니다. 장치가 재시작됩니다.'); } }
+        function applySensorSettings() { const selectedSensorId = sensorSelect.value; let interval = parseFloat(modalIntervalInput.value); if (interval < 0.01) interval = 0.01; modalIntervalInput.value = interval; const info = sensorInfo[selectedSensorId]; sensorValueHeader.textContent = `센서 값 (${info.unit})`; sensorChart.options.scales.y.title.text = `Value (${info.unit})`; sensorChart.data.datasets[0].label = info.name; dataBody.innerHTML = ''; sensorChart.data.labels = []; sensorChart.data.datasets[0].data = []; sensorChart.update(); sendCommand(`SC:${selectedSensorId},${interval}`); settingsModal.style.display = 'none'; }
+        function updateYAxis() { const auto = yAxisAuto.checked; yAxisMin.disabled = auto; yAxisMax.disabled = auto; sensorChart.options.scales.y.min = auto ? undefined : parseFloat(yAxisMin.value); sensorChart.options.scales.y.max = auto ? undefined : parseFloat(yAxisMax.value); sensorChart.update(); }
+        
+        // --- Splitter Logic ---
+        function initDrag(e) { e.preventDefault(); document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }
+        function onMouseMove(e) {
+            const isVertical = window.getComputedStyle(dataPanel).flexDirection === 'column';
+            const rect = dataPanel.getBoundingClientRect();
+            if (isVertical) { let newHeight = e.clientY - rect.top; if (newHeight < 100) newHeight = 100; if (newHeight > rect.height - 150) newHeight = rect.height - 150; dataTableWrapper.style.flexBasis = `${newHeight}px`; }
+            else { let newWidth = e.clientX - rect.left; if (newWidth < 200) newWidth = 200; if (newWidth > rect.width - 250) newWidth = rect.width - 250; dataTableWrapper.style.flexBasis = `${newWidth}px`; }
+        }
+        function onMouseUp() { document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }
+
+        initApp();
+    </script>
+</body>
+</html>
